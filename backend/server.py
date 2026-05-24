@@ -68,7 +68,6 @@ STATIC_DIR = Path(__file__).resolve().parent.parent
 
 # ---------- Globals (populated in load_models) ----------
 whisper = None
-kks = None
 speaker_encoder = None
 
 
@@ -127,18 +126,14 @@ def warmup_ollama():
 
 def load_models():
     """Load heavy models. Called only from __main__ to avoid Windows multiprocessing re-entry."""
-    import pykakasi
     from faster_whisper import WhisperModel
     from resemblyzer import VoiceEncoder
 
-    global whisper, kks, speaker_encoder
+    global whisper, speaker_encoder
 
     whisper_path = ensure_whisper_model(WHISPER_MODEL)
     print(f"[load] Whisper {WHISPER_MODEL} on {WHISPER_DEVICE} ({WHISPER_COMPUTE_TYPE})...", flush=True)
     whisper = WhisperModel(whisper_path, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
-
-    print("[load] pykakasi...", flush=True)
-    kks = pykakasi.kakasi()
 
     print("[load] speaker encoder (Resemblyzer, CPU)...", flush=True)
     speaker_encoder = VoiceEncoder("cpu", verbose=False)
@@ -313,11 +308,6 @@ def compute_speaker_embedding(audio: np.ndarray) -> np.ndarray | None:
         return None
 
 
-def to_romaji(text: str) -> str:
-    parts = kks.convert(text)
-    return " ".join(p["hepburn"] for p in parts if p.get("hepburn")).strip()
-
-
 def audio_rms(audio: np.ndarray) -> float:
     if len(audio) == 0:
         return 0.0
@@ -464,16 +454,10 @@ async def ws_endpoint(ws: WebSocket):
             speaker = speaker_registry.assign(embedding)
             await safe_send({"type": "partial", "text": text, "speaker": speaker})
             translation = await asyncio.to_thread(translate, text, src_lang, tgt_lang, translation_ctx)
-            romaji = ""
-            if src_lang == "ja":
-                romaji = await asyncio.to_thread(to_romaji, text)
-            elif tgt_lang == "ja":
-                romaji = await asyncio.to_thread(to_romaji, translation)
             await safe_send({
                 "type": "final",
                 "text": text,
                 "translation": translation,
-                "romaji": romaji,
                 "speaker": speaker,
             })
         except Exception as e:

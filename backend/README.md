@@ -3,7 +3,7 @@
 Stack:
 - **Whisper** large-v3-turbo (faster-whisper, CUDA fp16) for speech-to-text
 - **Qwen2.5-7B-Instruct** Q4_K_M served by **Ollama** for context-aware translation
-- **pykakasi** for romaji (Japanese)
+- **Resemblyzer** for per-utterance speaker diarization (CPU)
 - **FastAPI** + WebSocket
 
 Each WebSocket keeps a rolling context of the last 3 utterances and feeds them

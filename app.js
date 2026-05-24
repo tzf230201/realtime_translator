@@ -7,7 +7,6 @@ const srcLangSel = document.getElementById('srcLang');
 const tgtLangSel = document.getElementById('tgtLang');
 const transcriptEl = document.getElementById('transcript');
 const translationEl = document.getElementById('translation');
-const romajiEl = document.getElementById('romaji');
 const statusEl = document.getElementById('status');
 
 // ---------- State ----------
@@ -19,7 +18,6 @@ let isRecording = false;
 
 let transcriptSegs = [];
 let translationSegs = [];
-let romajiSegs = [];
 const FRESH_DURATION_MS = 5000;
 
 // Local mode state
@@ -92,7 +90,7 @@ function renderSegs(el, segs, interim = '') {
   }
 }
 
-[transcriptEl, romajiEl, translationEl].forEach(setupStickyScroll);
+[transcriptEl, translationEl].forEach(setupStickyScroll);
 
 function renderTranscript(interim = '') {
   renderSegs(transcriptEl, transcriptSegs, interim);
@@ -100,10 +98,6 @@ function renderTranscript(interim = '') {
 
 function renderTranslation() {
   renderSegs(translationEl, translationSegs);
-}
-
-function renderRomaji() {
-  renderSegs(romajiEl, romajiSegs);
 }
 
 function appendSeg(segs, text, renderFn, speaker = null) {
@@ -276,7 +270,6 @@ async function startLocalMode() {
         const sp = data.speaker || null;
         appendSeg(transcriptSegs, data.text, renderTranscript, sp);
         appendSeg(translationSegs, data.translation, renderTranslation, sp);
-        appendSeg(romajiSegs, data.romaji, renderRomaji, sp);
       } else if (data.type === 'error') {
         setStatus('Server error: ' + data.message, 'error');
       }
@@ -464,10 +457,8 @@ function downloadAudio() {
 function clearAll() {
   transcriptSegs = [];
   translationSegs = [];
-  romajiSegs = [];
   renderTranscript();
   renderTranslation();
-  renderRomaji();
 }
 
 // ---------- Events ----------
