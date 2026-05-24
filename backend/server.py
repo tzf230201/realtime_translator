@@ -10,8 +10,10 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 import asyncio
 import json
 import re
+from collections import deque
 from pathlib import Path
 
+import httpx
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -22,13 +24,15 @@ WHISPER_MODEL = "large-v3-turbo"
 WHISPER_DEVICE = "cuda"
 WHISPER_COMPUTE_TYPE = "float16"
 
-NLLB_MODEL = "facebook/nllb-200-3.3B"
-NLLB_QUANTIZATION = "int8"  # int8 ~3.3GB VRAM, fp16 ~6.6GB
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct-q4_K_M")
+OLLAMA_KEEP_ALIVE = "30m"
+TRANSLATION_HISTORY_TURNS = 3  # rolling context per WebSocket connection
 
-LANG_CODES = {
-    "ja": "jpn_Jpan",
-    "en": "eng_Latn",
-    "id": "ind_Latn",
+LANG_NAMES = {
+    "ja": "Japanese",
+    "en": "English",
+    "id": "Indonesian",
 }
 
 SAMPLE_RATE = 16000
@@ -59,8 +63,6 @@ STATIC_DIR = Path(__file__).resolve().parent.parent
 
 # ---------- Globals (populated in load_models) ----------
 whisper = None
-nllb_tokenizer = None
-nllb_model = None
 kks = None
 
 
@@ -87,117 +89,151 @@ def ensure_whisper_model(model_name: str) -> str:
     return str(local_path)
 
 
-def ensure_nllb_ct2(repo_id: str, quantization: str) -> str:
-    """Download NLLB and convert to CTranslate2 format with int8 quantization."""
-    from huggingface_hub import snapshot_download
-    from ctranslate2.converters import TransformersConverter
-
-    models_dir = Path(__file__).resolve().parent / "models"
-    models_dir.mkdir(exist_ok=True)
-
-    safe_id = repo_id.replace("/", "__")
-    hf_path = models_dir / safe_id
-    ct2_path = models_dir / f"{safe_id}_ct2_{quantization}"
-
-    if (ct2_path / "model.bin").exists():
-        return str(ct2_path)
-
-    if not (hf_path / "config.json").exists():
-        print(f"[download] {repo_id} -> {hf_path} (~6.6GB)", flush=True)
-        snapshot_download(repo_id=repo_id, local_dir=str(hf_path))
-
-    print(f"[convert] {hf_path} -> {ct2_path} ({quantization})", flush=True)
-    converter = TransformersConverter(str(hf_path))
-    converter.convert(str(ct2_path), quantization=quantization, force=False)
-    return str(ct2_path)
+def warmup_ollama():
+    """Ping Ollama and pre-load the model so the first WS translation is fast."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            tags = client.get(f"{OLLAMA_URL}/api/tags")
+            tags.raise_for_status()
+            names = [m.get("name", "") for m in tags.json().get("models", [])]
+            if OLLAMA_MODEL not in names:
+                print(
+                    f"[warn] Ollama model '{OLLAMA_MODEL}' not found locally. "
+                    f"Run: ollama pull {OLLAMA_MODEL}",
+                    flush=True,
+                )
+                return
+        print(f"[load] Warming up Ollama model '{OLLAMA_MODEL}'...", flush=True)
+        with httpx.Client(timeout=120.0) as client:
+            client.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "stream": False,
+                    "keep_alive": OLLAMA_KEEP_ALIVE,
+                    "options": {"num_predict": 1},
+                },
+            ).raise_for_status()
+    except Exception as e:
+        print(f"[warn] Ollama warmup failed: {e}", flush=True)
 
 
 def load_models():
     """Load heavy models. Called only from __main__ to avoid Windows multiprocessing re-entry."""
     import pykakasi
-    import ctranslate2
     from faster_whisper import WhisperModel
-    from transformers import AutoTokenizer
 
-    global whisper, nllb_tokenizer, nllb_model, kks
+    global whisper, kks
 
     whisper_path = ensure_whisper_model(WHISPER_MODEL)
     print(f"[load] Whisper {WHISPER_MODEL} on {WHISPER_DEVICE} ({WHISPER_COMPUTE_TYPE})...", flush=True)
     whisper = WhisperModel(whisper_path, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
 
-    nllb_path = ensure_nllb_ct2(NLLB_MODEL, NLLB_QUANTIZATION)
-    print(f"[load] NLLB {NLLB_MODEL} (CT2 {NLLB_QUANTIZATION}) on cuda...", flush=True)
-    nllb_tokenizer = AutoTokenizer.from_pretrained(NLLB_MODEL)
-    nllb_model = ctranslate2.Translator(nllb_path, device="cuda", compute_type=NLLB_QUANTIZATION)
-
     print("[load] pykakasi...", flush=True)
     kks = pykakasi.kakasi()
+
+    warmup_ollama()
     print("[ready] All models loaded.", flush=True)
 
 
 def _clean_for_translation(text: str) -> str:
     """Normalize whitespace and trim filler from Whisper output."""
-    import re
     text = text.strip()
     text = re.sub(r"\s+", " ", text)
     text = text.strip(" ,;:、")
     return text
 
 
-def _split_sentences(text: str, src: str) -> list[str]:
-    """Split into sentences for per-sentence translation (better NLLB quality)."""
-    import re
-    if src == "ja":
-        parts = re.split(r"(?<=[。！？])", text)
-    else:
-        parts = re.split(r"(?<=[.!?])\s+", text)
-    return [p.strip() for p in parts if p.strip()]
+_TRANSLATION_PREFIXES = (
+    "translation:", "translated:", "indonesian:", "english:", "japanese:",
+    "terjemahan:", "id:", "en:", "ja:",
+)
+_QUOTE_PAIRS = (('"', '"'), ("'", "'"), ("「", "」"), ("『", "』"), ("“", "”"), ("‘", "’"))
 
 
-def _translate_sentence(text: str, src_code: str, tgt_code: str) -> str:
-    nllb_tokenizer.src_lang = src_code
-    src_ids = nllb_tokenizer.encode(text, truncation=True, max_length=512)
-    src_tokens = nllb_tokenizer.convert_ids_to_tokens(src_ids)
-    results = nllb_model.translate_batch(
-        [src_tokens],
-        target_prefix=[[tgt_code]],
-        beam_size=5,
-        max_decoding_length=512,
-        length_penalty=1.0,
-        repetition_penalty=1.05,
-        no_repeat_ngram_size=3,
+def _post_clean_llm(text: str) -> str:
+    text = text.strip()
+    for op, cl in _QUOTE_PAIRS:
+        if text.startswith(op) and text.endswith(cl) and len(text) > len(op) + len(cl):
+            text = text[len(op):-len(cl)].strip()
+    lowered = text.lower()
+    for prefix in _TRANSLATION_PREFIXES:
+        if lowered.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    return text
+
+
+class TranslationContext:
+    """Holds the last few translated turns per WebSocket for conversational context."""
+
+    def __init__(self, max_turns: int = TRANSLATION_HISTORY_TURNS):
+        self.turns: deque[tuple[str, str]] = deque(maxlen=max_turns)
+        self.src_lang: str | None = None
+        self.tgt_lang: str | None = None
+
+    def reset_for(self, src: str, tgt: str):
+        if (src, tgt) != (self.src_lang, self.tgt_lang):
+            self.turns.clear()
+            self.src_lang, self.tgt_lang = src, tgt
+
+    def add(self, src_text: str, tgt_text: str):
+        if src_text and tgt_text:
+            self.turns.append((src_text, tgt_text))
+
+
+def _build_translate_messages(text: str, src: str, tgt: str, ctx: TranslationContext) -> list[dict]:
+    src_name = LANG_NAMES[src]
+    tgt_name = LANG_NAMES[tgt]
+    system = (
+        f"You translate live speech from {src_name} to {tgt_name}. "
+        f"Output ONLY the {tgt_name} translation — no quotes, no prefix, no notes, no explanation. "
+        f"Use natural, conversational {tgt_name} that matches the speaker's register (casual stays casual, formal stays formal). "
+        f"Refer to the prior turns for context (pronouns, references, ongoing topic) but never re-translate them. "
+        f"If the input is empty or untranslatable, reply with an empty message."
     )
-    target_tokens = results[0].hypotheses[0][1:]  # skip target language prefix
-    target_ids = nllb_tokenizer.convert_tokens_to_ids(target_tokens)
-    return nllb_tokenizer.decode(target_ids, skip_special_tokens=True).strip()
+    messages: list[dict] = [{"role": "system", "content": system}]
+    for src_h, tgt_h in ctx.turns:
+        messages.append({"role": "user", "content": src_h})
+        messages.append({"role": "assistant", "content": tgt_h})
+    messages.append({"role": "user", "content": text})
+    return messages
 
 
-def translate(text: str, src: str, tgt: str) -> str:
+def translate(text: str, src: str, tgt: str, ctx: TranslationContext) -> str:
     text = _clean_for_translation(text)
     if not text or src == tgt:
         return text
-    src_code = LANG_CODES.get(src)
-    tgt_code = LANG_CODES.get(tgt)
-    en_code = LANG_CODES["en"]
-    if not src_code or not tgt_code:
+    if src not in LANG_NAMES or tgt not in LANG_NAMES:
         return ""
-    sentences = _split_sentences(text, src)
-    if not sentences:
+    ctx.reset_for(src, tgt)
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": _build_translate_messages(text, src, tgt, ctx),
+        "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "num_predict": 512,
+            "repeat_penalty": 1.05,
+        },
+    }
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            r = client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        print(f"[translate-error] {e}", flush=True)
         return ""
 
-    # Pivot through English when neither side is English.
-    # NLLB has the most training data on EN pairs, so JA→EN→ID > JA→ID directly.
-    use_pivot = src != "en" and tgt != "en"
-
-    out = []
-    for s in sentences:
-        if use_pivot:
-            mid = _translate_sentence(s, src_code, en_code)
-            if mid:
-                out.append(_translate_sentence(mid, en_code, tgt_code))
-        else:
-            out.append(_translate_sentence(s, src_code, tgt_code))
-    return " ".join(t for t in out if t)
+    translation = _post_clean_llm(data.get("message", {}).get("content", ""))
+    if translation:
+        ctx.add(text, translation)
+    return translation
 
 
 def to_romaji(text: str) -> str:
@@ -286,6 +322,7 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     src_lang = "ja"
     tgt_lang = "id"
+    translation_ctx = TranslationContext()
     lead_in = np.zeros(0, dtype=np.float32)
     utterance = np.zeros(0, dtype=np.float32)
     in_speech = False
@@ -343,7 +380,7 @@ async def ws_endpoint(ws: WebSocket):
             if not text or ws.client_state != WebSocketState.CONNECTED:
                 return
             await safe_send({"type": "partial", "text": text})
-            translation = await asyncio.to_thread(translate, text, src_lang, tgt_lang)
+            translation = await asyncio.to_thread(translate, text, src_lang, tgt_lang, translation_ctx)
             romaji = ""
             if src_lang == "ja":
                 romaji = await asyncio.to_thread(to_romaji, text)
