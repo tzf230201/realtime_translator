@@ -1,22 +1,25 @@
 # Backend — Realtime Translator
 
 Stack:
-- **Whisper** large-v3-turbo (faster-whisper, CUDA fp16) untuk speech-to-text
-- **Qwen2.5-7B-Instruct** Q4_K_M via **Ollama** untuk terjemahan kontekstual
-- **pykakasi** untuk romaji (Jepang)
+- **Whisper** large-v3-turbo (faster-whisper, CUDA fp16) for speech-to-text
+- **Qwen2.5-7B-Instruct** Q4_K_M served by **Ollama** for context-aware translation
+- **pykakasi** for romaji (Japanese)
 - **FastAPI** + WebSocket
 
-Per-WebSocket rolling context: 3 utterance terakhir di-feed ke LLM sebagai multi-turn message, sehingga kata ganti (それ, あれ, dia, itu) bisa di-resolve sesuai konteks pembicaraan.
+Each WebSocket keeps a rolling context of the last 3 utterances and feeds them
+to the LLM as multi-turn messages, so pronouns and references (それ, あれ, "it",
+"that one") are resolved against the ongoing conversation instead of being
+translated in isolation.
 
 ## Requirements
 
 - Windows 10/11
 - Python 3.12 (`py -3.12 --version`)
-- NVIDIA GPU + CUDA driver (project di-test pada RTX 5070, ~7GB VRAM total)
-- [Ollama](https://ollama.com) (atau via `winget install Ollama.Ollama`)
+- NVIDIA GPU + CUDA driver (tested on RTX 5070, ~7 GB VRAM in total)
+- [Ollama](https://ollama.com) (or install via `winget install Ollama.Ollama`)
 - ~10 GB free disk (venv + Whisper model + Qwen model)
 
-## Install (sekali saja)
+## One-time install
 
 1. **Install Ollama**
 
@@ -24,7 +27,7 @@ Per-WebSocket rolling context: 3 utterance terakhir di-feed ke LLM sebagai multi
    winget install --id Ollama.Ollama -e
    ```
 
-   Setelah selesai, Ollama service auto-start setiap boot.
+   The Ollama service auto-starts on boot after installation.
 
 2. **Pull Qwen2.5-7B**
 
@@ -32,56 +35,66 @@ Per-WebSocket rolling context: 3 utterance terakhir di-feed ke LLM sebagai multi
    ollama pull qwen2.5:7b-instruct-q4_K_M
    ```
 
-   Sekitar 4.7 GB.
+   About 4.7 GB.
 
-3. **Setup Python venv**
+3. **Set up the Python venv**
 
-   Double-click `install.bat`. Akan buat `.venv/` dan install PyTorch CUDA, FastAPI, faster-whisper, httpx, dll.
+   Double-click `install.bat`. It creates `.venv/` and installs FastAPI,
+   faster-whisper, httpx, etc.
 
-## Menjalankan
+## Running
 
-Double-click `start.bat` (atau `run.bat` di root project untuk start + buka browser otomatis).
+Double-click `start.bat`, or `run.bat` at the project root for a launch
+that also opens the browser automatically.
 
-Run pertama: download Whisper turbo (~1.5 GB) ke `C:\Users\<you>\.cache\huggingface\`. Run berikutnya load dari cache (~15 detik).
+First run downloads the Whisper turbo model (~1.5 GB) into
+`C:\Users\<you>\.cache\huggingface\`. Subsequent runs load from cache
+(~15 s).
 
-Saat siap, buka http://localhost:8000.
+Once the log shows `Uvicorn running`, open http://localhost:8000.
 
 ## Tuning
 
 Edit `server.py`:
 
-- **Model LLM lebih kecil/cepat** (jika VRAM mepet atau ingin latensi lebih rendah):
+- **Smaller / faster LLM** (when VRAM is tight or you want lower latency):
   ```python
-  OLLAMA_MODEL = "qwen2.5:3b-instruct-q4_K_M"  # ~2 GB VRAM, lebih cepat, sedikit kurang akurat
-  # atau "gemma2:9b-instruct-q4_K_M" (~5.5 GB, alternatif setara)
+  OLLAMA_MODEL = "qwen2.5:3b-instruct-q4_K_M"  # ~2 GB VRAM, faster, slightly less accurate
+  # or "gemma2:9b-instruct-q4_K_M" (~5.5 GB, comparable alternative)
   ```
-  Setelah ganti, pull dulu: `ollama pull <nama-model>`.
+  Remember to `ollama pull <name>` first.
 
-- **Lebih banyak konteks** untuk pembicaraan panjang:
+- **Longer conversational memory**:
   ```python
   TRANSLATION_HISTORY_TURNS = 5  # default 3
   ```
 
-- **Whisper lebih cepat / kurang akurat**:
+- **Faster / less accurate Whisper**:
   ```python
-  WHISPER_MODEL = "medium"  # atau "small"
+  WHISPER_MODEL = "medium"  # or "small"
   ```
 
-- **Sensitivitas VAD**:
+- **VAD sensitivity**:
   ```python
-  START_SPEECH_RMS_THRESHOLD = 0.006   # naikkan kalau mic noisy
+  START_SPEECH_RMS_THRESHOLD = 0.006   # raise if mic picks up noise
   END_SILENCE_SAMPLES = int(SAMPLE_RATE * 0.45)
   ```
 
-- **Ollama endpoint custom** (mis. di mesin lain):
+- **Point Ollama at a different host** (e.g. another machine on the LAN):
   ```powershell
   $env:OLLAMA_URL = "http://192.168.1.10:11434"; python server.py
   ```
 
 ## Troubleshooting
 
-- **`Ollama model 'qwen2.5:...' not found`** di log → jalankan `ollama pull qwen2.5:7b-instruct-q4_K_M`.
-- **Translate hang / timeout** → cek `ollama list` (apakah model ter-load) dan `ollama ps` (apakah ada process aktif).
-- **"CUDA out of memory"** → kombinasi Whisper + Qwen 7B Q4 butuh ~7 GB VRAM. Turunkan Whisper (`medium`) atau ganti LLM ke 3B.
-- **Permission mikrofon ditolak** → buka via `http://localhost:8000` (BUKAN `file://`).
-- **Latency tinggi (>2s per kalimat)** → cek `ollama ps` — kalau "Until" pendek (model dibuang dari VRAM), naikkan `OLLAMA_KEEP_ALIVE` di server.py.
+- **`Ollama model 'qwen2.5:...' not found`** in the log → run
+  `ollama pull qwen2.5:7b-instruct-q4_K_M`.
+- **Translate hangs / times out** → check `ollama list` (is the model
+  there?) and `ollama ps` (is a process loaded?).
+- **"CUDA out of memory"** → Whisper + Qwen 7B Q4 together use ~7 GB
+  VRAM. Drop Whisper to `medium` or switch the LLM to a 3B variant.
+- **Microphone permission denied** → open via `http://localhost:8000`
+  (not `file://`).
+- **High latency (>2 s per sentence)** → check `ollama ps`. If the
+  "Until" column shows a short keep-alive, raise `OLLAMA_KEEP_ALIVE`
+  in `server.py`.
