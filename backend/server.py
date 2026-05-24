@@ -29,6 +29,11 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct-q4_K_M")
 OLLAMA_KEEP_ALIVE = "30m"
 TRANSLATION_HISTORY_TURNS = 3  # rolling context per WebSocket connection
 
+# Speaker diarization
+SPEAKER_MATCH_THRESHOLD = 0.75   # cosine similarity to assign to existing speaker
+SPEAKER_MIN_AUDIO_SECONDS = 1.2  # below this, reuse the previous label (avoid spurious new speakers)
+SPEAKER_MAX_COUNT = 12
+
 LANG_NAMES = {
     "ja": "Japanese",
     "en": "English",
@@ -64,6 +69,7 @@ STATIC_DIR = Path(__file__).resolve().parent.parent
 # ---------- Globals (populated in load_models) ----------
 whisper = None
 kks = None
+speaker_encoder = None
 
 
 WHISPER_REPO_MAP = {
@@ -123,8 +129,9 @@ def load_models():
     """Load heavy models. Called only from __main__ to avoid Windows multiprocessing re-entry."""
     import pykakasi
     from faster_whisper import WhisperModel
+    from resemblyzer import VoiceEncoder
 
-    global whisper, kks
+    global whisper, kks, speaker_encoder
 
     whisper_path = ensure_whisper_model(WHISPER_MODEL)
     print(f"[load] Whisper {WHISPER_MODEL} on {WHISPER_DEVICE} ({WHISPER_COMPUTE_TYPE})...", flush=True)
@@ -132,6 +139,9 @@ def load_models():
 
     print("[load] pykakasi...", flush=True)
     kks = pykakasi.kakasi()
+
+    print("[load] speaker encoder (Resemblyzer, CPU)...", flush=True)
+    speaker_encoder = VoiceEncoder("cpu", verbose=False)
 
     warmup_ollama()
     print("[ready] All models loaded.", flush=True)
@@ -236,6 +246,73 @@ def translate(text: str, src: str, tgt: str, ctx: TranslationContext) -> str:
     return translation
 
 
+class SpeakerRegistry:
+    """Online clustering of speaker embeddings, one instance per WebSocket connection."""
+
+    def __init__(self, threshold: float = SPEAKER_MATCH_THRESHOLD, max_speakers: int = SPEAKER_MAX_COUNT):
+        self.centroids: list[np.ndarray] = []
+        self.labels: list[str] = []
+        self.counts: list[int] = []
+        self.threshold = threshold
+        self.max_speakers = max_speakers
+        self.last_label: str | None = None
+
+    @staticmethod
+    def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+        denom = float(np.linalg.norm(a) * np.linalg.norm(b)) + 1e-9
+        return float(np.dot(a, b) / denom)
+
+    def _new_label(self) -> str:
+        i = len(self.centroids)
+        return chr(ord("A") + i) if i < 26 else f"S{i + 1}"
+
+    def assign(self, embedding: np.ndarray | None) -> str | None:
+        if embedding is None:
+            return self.last_label  # too short to embed — reuse previous label
+        if not self.centroids:
+            label = self._new_label()
+            self.centroids.append(embedding.copy())
+            self.labels.append(label)
+            self.counts.append(1)
+            self.last_label = label
+            return label
+        sims = [self._cosine(embedding, c) for c in self.centroids]
+        best = int(np.argmax(sims))
+        if sims[best] >= self.threshold:
+            n = self.counts[best]
+            self.centroids[best] = (self.centroids[best] * n + embedding) / (n + 1)
+            self.counts[best] = n + 1
+            self.last_label = self.labels[best]
+            return self.last_label
+        if len(self.centroids) >= self.max_speakers:
+            # Out of slots — bucket into the closest existing speaker.
+            self.last_label = self.labels[best]
+            return self.last_label
+        label = self._new_label()
+        self.centroids.append(embedding.copy())
+        self.labels.append(label)
+        self.counts.append(1)
+        self.last_label = label
+        return label
+
+
+def compute_speaker_embedding(audio: np.ndarray) -> np.ndarray | None:
+    """Return a 256-d speaker embedding, or None if the clip is too short / fails."""
+    if speaker_encoder is None:
+        return None
+    if len(audio) < int(SAMPLE_RATE * SPEAKER_MIN_AUDIO_SECONDS):
+        return None
+    try:
+        from resemblyzer import preprocess_wav
+        wav = preprocess_wav(audio.astype(np.float32), source_sr=SAMPLE_RATE)
+        if len(wav) < int(SAMPLE_RATE * 1.0):
+            return None
+        return speaker_encoder.embed_utterance(wav)
+    except Exception as e:
+        print(f"[diarize-error] {e}", flush=True)
+        return None
+
+
 def to_romaji(text: str) -> str:
     parts = kks.convert(text)
     return " ".join(p["hepburn"] for p in parts if p.get("hepburn")).strip()
@@ -323,6 +400,7 @@ async def ws_endpoint(ws: WebSocket):
     src_lang = "ja"
     tgt_lang = "id"
     translation_ctx = TranslationContext()
+    speaker_registry = SpeakerRegistry()
     lead_in = np.zeros(0, dtype=np.float32)
     utterance = np.zeros(0, dtype=np.float32)
     in_speech = False
@@ -376,10 +454,15 @@ async def ws_endpoint(ws: WebSocket):
     async def process_chunk(chunk: np.ndarray):
         nonlocal processing
         try:
-            text = await asyncio.to_thread(transcribe, chunk, src_lang)
+            # Whisper (GPU) and speaker embedding (CPU) can run in parallel.
+            text, embedding = await asyncio.gather(
+                asyncio.to_thread(transcribe, chunk, src_lang),
+                asyncio.to_thread(compute_speaker_embedding, chunk),
+            )
             if not text or ws.client_state != WebSocketState.CONNECTED:
                 return
-            await safe_send({"type": "partial", "text": text})
+            speaker = speaker_registry.assign(embedding)
+            await safe_send({"type": "partial", "text": text, "speaker": speaker})
             translation = await asyncio.to_thread(translate, text, src_lang, tgt_lang, translation_ctx)
             romaji = ""
             if src_lang == "ja":
@@ -391,6 +474,7 @@ async def ws_endpoint(ws: WebSocket):
                 "text": text,
                 "translation": translation,
                 "romaji": romaji,
+                "speaker": speaker,
             })
         except Exception as e:
             print(f"[error] {e}", flush=True)

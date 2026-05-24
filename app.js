@@ -65,6 +65,12 @@ function setupStickyScroll(el) {
   });
 }
 
+function speakerChipHtml(speaker) {
+  if (!speaker) return '';
+  const cls = /^[A-H]$/.test(speaker) ? `speaker-${speaker}` : 'speaker-default';
+  return `<span class="speaker-chip ${cls}">${escapeHtml(speaker)}</span>`;
+}
+
 function renderSegs(el, segs, interim = '') {
   const sticky = stickyMap.get(el) ?? true;
   const prevScroll = el.scrollTop;
@@ -73,7 +79,10 @@ function renderSegs(el, segs, interim = '') {
     let cls = 'seg old';
     if (i === last) cls = 'seg latest';
     else if (i === last - 1) cls = 'seg recent';
-    return `<span class="${cls}">${escapeHtml(s.text)}</span>`;
+    const sameSpeaker = i > 0 && segs[i - 1].speaker === s.speaker;
+    const chip = sameSpeaker ? '' : speakerChipHtml(s.speaker);
+    const br = i > 0 && !sameSpeaker ? '<br>' : '';
+    return `${br}${chip}<span class="${cls}">${escapeHtml(s.text)}</span>`;
   }).join(' ');
   el.innerHTML = html + (interim ? ` <span class="interim">${escapeHtml(interim)}</span>` : '');
   if (sticky) {
@@ -97,9 +106,9 @@ function renderRomaji() {
   renderSegs(romajiEl, romajiSegs);
 }
 
-function appendSeg(segs, text, renderFn) {
+function appendSeg(segs, text, renderFn, speaker = null) {
   if (!text) return;
-  segs.push({ text, time: Date.now() });
+  segs.push({ text, time: Date.now(), speaker });
   renderFn();
 }
 
@@ -264,9 +273,10 @@ async function startLocalMode() {
       } else if (data.type === 'partial') {
         renderTranscript(data.text);
       } else if (data.type === 'final') {
-        appendSeg(transcriptSegs, data.text, renderTranscript);
-        appendSeg(translationSegs, data.translation, renderTranslation);
-        appendSeg(romajiSegs, data.romaji, renderRomaji);
+        const sp = data.speaker || null;
+        appendSeg(transcriptSegs, data.text, renderTranscript, sp);
+        appendSeg(translationSegs, data.translation, renderTranslation, sp);
+        appendSeg(romajiSegs, data.romaji, renderRomaji, sp);
       } else if (data.type === 'error') {
         setStatus('Server error: ' + data.message, 'error');
       }

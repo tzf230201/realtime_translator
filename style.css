@@ -302,3 +302,25 @@ footer {
   text-align: center;
   color: var(--muted);
 }
+
+.speaker-chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  margin-right: 6px;
+  border-radius: 4px;
+  vertical-align: 0.05em;
+  letter-spacing: 0.05em;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+}
+
+.speaker-A { background: #3b82f6; color: #fff; }
+.speaker-B { background: #10b981; color: #fff; }
+.speaker-C { background: #f59e0b; color: #0b0f24; }
+.speaker-D { background: #ef4444; color: #fff; }
+.speaker-E { background: #a855f7; color: #fff; }
+.speaker-F { background: #ec4899; color: #fff; }
+.speaker-G { background: #14b8a6; color: #fff; }
+.speaker-H { background: #f97316; color: #0b0f24; }
+.speaker-default { background: var(--surface-2); color: var(--muted); }

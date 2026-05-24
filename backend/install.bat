@@ -19,7 +19,7 @@ echo === Installing PyTorch with CUDA 12.8 (Blackwell support) ===
 pip install torch --index-url https://download.pytorch.org/whl/cu128
 
 echo === Installing other packages ===
-pip install fastapi==0.115.6 "uvicorn[standard]==0.34.0" faster-whisper==1.1.1 httpx==0.28.1 pykakasi==2.3.0 "numpy<2"
+pip install fastapi==0.115.6 "uvicorn[standard]==0.34.0" faster-whisper==1.1.1 httpx==0.28.1 pykakasi==2.3.0 resemblyzer==0.1.4 "numpy<2"
 
 echo.
 echo === Done. Run start.bat to launch the server. ===
