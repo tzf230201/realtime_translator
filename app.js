@@ -244,7 +244,7 @@ async function startLocalMode() {
   ws.binaryType = 'arraybuffer';
   const wsReady = new Promise((resolve, reject) => {
     const timeoutId = window.setTimeout(() => {
-      reject(new Error('Koneksi ke server lokal timeout'));
+      reject(new Error('Connection to the local server timed out'));
     }, 5000);
     ws.addEventListener('open', () => {
       window.clearTimeout(timeoutId);
@@ -252,7 +252,7 @@ async function startLocalMode() {
     }, { once: true });
     ws.addEventListener('error', () => {
       window.clearTimeout(timeoutId);
-      reject(new Error('Gagal terhubung ke server lokal'));
+      reject(new Error('Failed to connect to the local server'));
     }, { once: true });
   });
 
@@ -273,9 +273,9 @@ async function startLocalMode() {
     } catch (_) {}
   };
 
-  ws.onerror = () => setStatus('WebSocket error - server jalan?', 'error');
+  ws.onerror = () => setStatus('WebSocket error — is the server running?', 'error');
   ws.onclose = () => {
-    if (isRecording) setStatus('WebSocket terputus', 'error');
+    if (isRecording) setStatus('WebSocket disconnected', 'error');
   };
 
   await wsReady;
@@ -352,7 +352,7 @@ async function captureSystemAudio() {
   const audioTracks = display.getAudioTracks();
   if (audioTracks.length === 0) {
     display.getTracks().forEach(t => t.stop());
-    throw new Error('Tidak ada audio. Pastikan centang "Share tab audio" / "Share system audio" saat memilih.');
+    throw new Error('No audio track. Make sure to tick "Share tab audio" / "Share system audio" in the picker.');
   }
   display.getVideoTracks().forEach(t => t.stop());
   return new MediaStream(audioTracks);
@@ -363,10 +363,10 @@ async function start() {
   try {
     const source = sourceSel ? sourceSel.value : 'mic';
     if (source === 'system') {
-      setStatus('Pilih tab/window dan centang "Share audio"...', 'idle');
+      setStatus('Pick a tab/window and tick "Share audio"...', 'idle');
       mediaStream = await captureSystemAudio();
     } else {
-      setStatus('Meminta akses mikrofon...', 'idle');
+      setStatus('Requesting microphone access...', 'idle');
       mediaStream = await captureMic();
     }
 
@@ -394,7 +394,7 @@ async function start() {
     startBtn.classList.add('recording');
     stopBtn.disabled = false;
     if (sourceSel) sourceSel.disabled = true;
-    setStatus(`Merekam [${source === 'system' ? 'audio laptop' : 'mic'}]...`, 'recording');
+    setStatus(`Recording [${source === 'system' ? 'system audio' : 'mic'}]...`, 'recording');
 
     // If user stops sharing system audio from browser UI, treat as stop
     if (mediaStream) {
@@ -406,7 +406,7 @@ async function start() {
     }
   } catch (err) {
     console.error(err);
-    setStatus('Gagal: ' + err.message, 'error');
+    setStatus('Failed: ' + err.message, 'error');
     cleanup();
   }
 }
@@ -424,7 +424,7 @@ function stop() {
   startBtn.classList.remove('recording');
   stopBtn.disabled = true;
   if (sourceSel) sourceSel.disabled = false;
-  setStatus('Berhenti - audio siap di-download', 'ok');
+  setStatus('Stopped — audio ready to download', 'ok');
 }
 
 function cleanup() {

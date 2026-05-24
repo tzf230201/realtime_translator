@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Record · Transcribe · Translate</title>
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
   <main class="container">
     <header>
       <h1>Record · Transcribe · Translate</h1>
-      <p class="subtitle">Rekam suara, transkrip, dan terjemahkan secara real-time dengan backend lokal.</p>
+      <p class="subtitle">Record audio, transcribe, and translate in real time with a local backend.</p>
     </header>
 
     <section class="controls">
@@ -19,38 +19,38 @@
           Source
           <select id="source">
             <option value="mic" selected>🎤 Microphone</option>
-            <option value="system">🖥️ Audio Laptop (Tab/Window)</option>
+            <option value="system">🖥️ System Audio (Tab/Window)</option>
           </select>
         </label>
 
         <label>
-          Bahasa sumber
+          Source language
           <select id="srcLang">
-            <option value="id-ID">Indonesia</option>
+            <option value="id-ID">Indonesian</option>
             <option value="en-US">English (US)</option>
-            <option value="ja-JP" selected>日本語</option>
+            <option value="ja-JP" selected>Japanese</option>
           </select>
         </label>
 
         <label>
-          Terjemahkan ke
+          Translate to
           <select id="tgtLang">
-            <option value="id" selected>Indonesia</option>
+            <option value="id" selected>Indonesian</option>
             <option value="en">English</option>
-            <option value="ja">日本語</option>
+            <option value="ja">Japanese</option>
           </select>
         </label>
       </div>
 
       <div class="btn-row">
-        <button id="startBtn" class="primary">Start Rekam</button>
+        <button id="startBtn" class="primary">Start Recording</button>
         <button id="stopBtn" disabled>Stop</button>
         <button id="downloadBtn" disabled>Download Audio</button>
-        <button id="clearBtn">Bersihkan</button>
+        <button id="clearBtn">Clear</button>
       </div>
 
       <div class="status-row">
-        <div id="status" class="status idle">Siap</div>
+        <div id="status" class="status idle">Ready</div>
         <div id="speakIndicator" class="speak-indicator">Idle</div>
       </div>
 
@@ -79,11 +79,11 @@
 
     <footer>
       <small>
-        Audio tetap direkam meskipun transkrip atau terjemahan gagal. Klik Download untuk menyimpan file.
+        Audio keeps recording even if transcription or translation fails. Click Download to save the file.
       </small>
     </footer>
   </main>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
