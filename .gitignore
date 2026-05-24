@@ -1,0 +1,22 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Downloaded models (multi-GB, fetched on first run)
+backend/models/
+
+# Logs
+*.log
+backend/*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude local settings (keep project-level CLAUDE.md, ignore local overrides)
+.claude/settings.local.json

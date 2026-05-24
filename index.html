@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Record · Transcribe · Translate</title>
+  <link rel="stylesheet" href="style.css?v=6" />
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Record · Transcribe · Translate</h1>
+      <p class="subtitle">Rekam suara, transkrip, dan terjemahkan secara real-time dengan backend lokal.</p>
+    </header>
+
+    <section class="controls">
+      <div class="lang-row">
+        <label>
+          Source
+          <select id="source">
+            <option value="mic" selected>🎤 Microphone</option>
+            <option value="system">🖥️ Audio Laptop (Tab/Window)</option>
+          </select>
+        </label>
+
+        <label>
+          Bahasa sumber
+          <select id="srcLang">
+            <option value="id-ID">Indonesia</option>
+            <option value="en-US">English (US)</option>
+            <option value="ja-JP" selected>日本語</option>
+          </select>
+        </label>
+
+        <label>
+          Terjemahkan ke
+          <select id="tgtLang">
+            <option value="id" selected>Indonesia</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="btn-row">
+        <button id="startBtn" class="primary">Start Rekam</button>
+        <button id="stopBtn" disabled>Stop</button>
+        <button id="downloadBtn" disabled>Download Audio</button>
+        <button id="clearBtn">Bersihkan</button>
+      </div>
+
+      <div class="status-row">
+        <div id="status" class="status idle">Siap</div>
+        <div id="speakIndicator" class="speak-indicator">Idle</div>
+      </div>
+
+      <div class="viz-wrap">
+        <canvas id="visualizer" width="1200" height="120"></canvas>
+        <div class="level-meter">
+          <div id="levelBar" class="level-bar"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panels">
+      <div class="panel">
+        <h2>Transcript</h2>
+        <div id="transcript" class="text-area"></div>
+      </div>
+      <div class="panel" id="romajiPanel" hidden>
+        <h2>Romaji</h2>
+        <div id="romaji" class="text-area"></div>
+      </div>
+      <div class="panel">
+        <h2>Translation</h2>
+        <div id="translation" class="text-area"></div>
+      </div>
+    </section>
+
+    <footer>
+      <small>
+        Audio tetap direkam meskipun transkrip atau terjemahan gagal. Klik Download untuk menyimpan file.
+      </small>
+    </footer>
+  </main>
+
+  <script src="app.js?v=7"></script>
+</body>
+</html>
